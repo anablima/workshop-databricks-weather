@@ -6,6 +6,8 @@ Workshop prático de engenharia de dados no Databricks usando a API da **OpenWea
 
 O workshop simula um pipeline de dados real: coleta dados de clima atual e previsão de 5 dias para cidades brasileiras, armazena os payloads JSON brutos na camada Bronze, processa e tipifica na Silver, e constrói métricas analíticas na Gold. Inclui desafios de streaming, recursos avançados do Delta Lake e governança com Unity Catalog.
 
+A pasta `desafios/` contém 4 ETLs completos (Bronze → Silver → Gold) que ampliam o workshop com novas fontes de dados: taxas de câmbio (Frankfurter e ExchangeRate-API), dados de países (REST Countries) e indicadores socioeconômicos (World Bank). Cada desafio explora um padrão avançado de engenharia de dados: SCD Tipo 2, normalização de JSONs aninhados e ingestão paginada com controle de estado.
+
 ## 🏗️ Arquitetura
 
 ```
@@ -28,7 +30,7 @@ OpenWeatherMap API
 └────────────────────────────────────────────────────┘
 ```
 
-## 📓 Notebooks
+## 📓 Notebooks Principais
 
 Os notebooks devem ser executados **em ordem sequencial**, pois cada um depende dos dados produzidos pelo anterior.
 
@@ -44,12 +46,24 @@ Os notebooks devem ser executados **em ordem sequencial**, pois cada um depende 
 | 06b | [06b_governance_uc](notebooks/06b_governance_uc) | — | `GRANT`/`REVOKE`, hierarquia de permissões do UC, Managed vs External Tables, Row-Level Security e Column Masking |
 | 07 | [07_streaming_silver_current](notebooks/07_streaming_silver_current) | Silver | Desafio: substitui o processamento batch do notebook 03 por Structured Streaming com `foreachBatch` + `trigger(availableNow=True)` |
 
+## 🧩 Desafios ETL
+
+A pasta `desafios/` contém 4 pipelines ETL completos (Bronze → Silver → Gold) com fontes de dados independentes. Cada desafio cria seu próprio schema no catálogo `workshop_weather` e pode ser executado de forma autônoma após o notebook `00_setup_environment`.
+
+| # | Notebook | Schema | Descrição |
+|---|---------|--------|-----------|
+| D1 | [D1_ETL_frankfurter](desafios/D1_ETL_frankfurter) | `exchange` | Pipeline Bronze → Silver → Gold de taxas de câmbio (Frankfurter API). Ingestão batch incremental, Delta append-only na Bronze, `MERGE INTO` por chave composta, window functions e `OPTIMIZE + ZORDER` |
+| D2 | [D2_ETL_exchangerate](desafios/D2_ETL_exchangerate) | `exchange` | **SCD Tipo 2** de taxas de câmbio (ExchangeRate-API). `MERGE INTO` com múltiplos `WHEN MATCHED`, lógica de update + insert, controle de vigência (`valid_from`, `valid_to`, `is_current`) |
+| D3 | [D3_ETL_restcountries](desafios/D3_ETL_restcountries) | `countries` | Normalização de JSONs aninhados (REST Countries API). `explode()`, `explode(map_entries())`, `MapType`, `ArrayType`, tabelas dimensão em Star Schema |
+| D4 | [D4_ETL_worldbank](desafios/D4_ETL_worldbank) | `worldbank` | Ingestão paginada com controle de estado (World Bank API). Tabela de watermark/controle, `explode()` de array JSON, tabela de fato volumosa, Gold com pivot de indicadores |
+
 ## 🚀 Como Executar
 
 1. **Pré-requisito:** Obter uma API key gratuita em [openweathermap.org](https://openweathermap.org/api)
 2. **Execute o notebook `00_setup_environment`** para criar o catálogo, schemas e volume
 3. **Configure o Secret Scope** `openweather` com a key `api_key` (instruções no notebook 00)
 4. **Execute os notebooks em sequência** (01 → 02 → 03 → 04 → 05 → 06 → 06b → 07)
+5. **Desafios ETL:** execute os notebooks da pasta `desafios/` (D1 → D2 → D3 → D4) após o setup. Cada desafio é independente e cria seu próprio schema
 
 > **Dica:** Cada notebook inclui um checklist no final. Confirme todos os itens antes de avançar para o próximo.
 
@@ -59,7 +73,10 @@ Os notebooks devem ser executados **em ordem sequencial**, pois cada um depende 
 * **Delta Lake** — `MERGE INTO`, `COPY INTO`, Time Travel, Change Data Feed, `OPTIMIZE`/`ZORDER`, `VACUUM`
 * **Medallion Architecture** — Bronze (dado bruto), Silver (limpo e tipado), Gold (métricas analíticas)
 * **Structured Streaming** — `readStream`/`writeStream`, `foreachBatch`, `trigger(availableNow=True)`, checkpoints
-* **PySpark** — `from_json()`, `explode()`, window functions, `StructType`, Data Quality flags
+* **PySpark** — `from_json()`, `explode()`, `explode(map_entries())`, window functions, `StructType`, `MapType`, Data Quality flags
+* **SCD Tipo 2** — Slowly Changing Dimensions, controle de vigência com `valid_from`/`valid_to`/`is_current`
+* **Ingestão Paginada** — controle de estado via tabela de watermark, paginação de APIs REST
+* **Star Schema** — tabelas dimensão normalizadas (`dim_country`, `dim_country_language`, `dim_country_currency`)
 * **Databricks Secrets** — armazenamento seguro de credenciais com redação em logs
 * **Otimização** — Adaptive Query Execution (AQE), Liquid Clustering, Spark UI
 
@@ -68,29 +85,23 @@ Os notebooks devem ser executados **em ordem sequencial**, pois cada um depende 
 ```
 workshop-databricks-weather/
 ├── README.md
-└── notebooks/
-    ├── 00_setup_environment
-    ├── 01_ingest_bronze_current_weather
-    ├── 02_ingest_bronze_forecast
-    ├── 03_process_silver_current_weather
-    ├── 04_process_silver_forecast
-    ├── 05_build_gold_metrics
-    ├── 06_delta_advanced_features
-    ├── 06b_governance_uc
-    └── 07_streaming_silver_current
+├── notebooks/
+│   ├── 00_setup_environment
+│   ├── 01_ingest_bronze_current_weather
+│   ├── 02_ingest_bronze_forecast
+│   ├── 03_process_silver_current_weather
+│   ├── 04_process_silver_forecast
+│   ├── 05_build_gold_metrics
+│   ├── 06_delta_advanced_features
+│   ├── 06b_governance_uc
+│   └── 07_streaming_silver_current
+└── desafios/
+    ├── D1_ETL_frankfurter
+    ├── D2_ETL_exchangerate
+    ├── D3_ETL_restcountries
+    └── D4_ETL_worldbank
 ```
 
-## 📊 Tabelas Criadas
-
-| Camada | Tabela/View | Descrição |
-|--------|-------------|-----------|
-| Bronze | `workshop_weather.bronze.raw_current_weather` | Payloads JSON brutos do clima atual |
-| Bronze | `workshop_weather.bronze.raw_forecast` | Payloads JSON brutos da previsão de 5 dias |
-| Silver | `workshop_weather.silver.current_weather` | Clima atual processado, tipado e com DQ |
-| Silver | `workshop_weather.silver.forecast` | Previsão explodida por slot de 3h, tipada e com DQ |
-| Gold | `workshop_weather.gold.daily_summary` | Resumo diário por cidade (avg/min/max temp, umidade, vento) |
-| Gold | `workshop_weather.gold.city_ranking_temp` | Ranking de cidades por temperatura atual |
-| Gold | `workshop_weather.gold.weather_alerts` | View com alertas: HIGH_TEMP, RAIN_RISK, STORM_RISK |
 
 ---
 
