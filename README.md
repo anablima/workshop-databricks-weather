@@ -21,8 +21,9 @@ OpenWeatherMap API
 │  ┌─── bronze ──┐ ┌──── silver ───┐ ┌──── gold ────┐│
 │  │ raw_current │ │current_weather│ │daily_summary ││
 │  │ _weather    │ │forecast       │ │city_ranking  ││
-│  │ raw_forecast│ │               │ │_temp         ││
-│  │ landing     │ │               │ │weather_alerts││
+│  │ raw_forecast│ │watermark_ctrl │ │_temp         ││
+│  │ landing     │ │               │ │temp_mov_avg  ││
+│  │             │ │               │ │weather_alerts││
 │  └─────────────┘ └───────────────┘ └──────────────┘│
 │                                                    │
 │  Volume: bronze.landing                            │
@@ -37,11 +38,11 @@ Os notebooks devem ser executados **em ordem sequencial**, pois cada um depende 
 | # | Notebook | Camada | Descrição |
 |---|---------|--------|-----------|
 | 00 | [00_setup_environment](notebooks/00_setup_environment) | — | Cria o catálogo `workshop_weather`, schemas (`bronze`, `silver`, `gold`), volume `landing` e configura o Secret Scope para a API key |
-| 01 | [01_ingest_bronze_current_weather](notebooks/01_ingest_bronze_current_weather) | Bronze | Chama a API `/weather` para 4 cidades brasileiras e grava os payloads JSON brutos na Delta Table. Inclui Plano B com `COPY INTO` e Auto Loader |
+| 01 | [01_ingest_bronze_current_weather](notebooks/01_ingest_bronze_current_weather) | Bronze | Chama a API `/weather` para **64 cidades** brasileiras (27 capitais + 37 municípios da RMSP) com sufixo `,BR` para desambiguação. Widgets parametrizáveis (`cities`, `catalog`) para uso em Jobs. Grava payloads JSON brutos na Delta Table. Inclui Plano B com `COPY INTO` e Auto Loader |
 | 02 | [02_ingest_bronze_forecast](notebooks/02_ingest_bronze_forecast) | Bronze | Chama a API `/forecast` e grava os payloads JSON de previsão de 5 dias na Bronze |
-| 03 | [03_process_silver_current_weather](notebooks/03_process_silver_current_weather) | Silver | Lê a Bronze, parseia o JSON com `from_json()`, aplica tipagem estrita, regras de Data Quality e `MERGE INTO` idempotente |
+| 03 | [03_process_silver_current_weather](notebooks/03_process_silver_current_weather) | Silver | Lê a Bronze de forma **incremental via `table_changes()` (CDF)** com tabela de watermark, parseia o JSON com `from_json()`, aplica tipagem estrita, deduplicação e `MERGE INTO` idempotente |
 | 04 | [04_process_silver_forecast](notebooks/04_process_silver_forecast) | Silver | Explode o array `list[]` em uma linha por slot de 3h, tipifica, aplica DQ e faz `MERGE INTO` |
-| 05 | [05_build_gold_metrics](notebooks/05_build_gold_metrics) | Gold | Cria `daily_summary`, `city_ranking_temp` (com `ROW_NUMBER()`) e a view `weather_alerts`. Aplica `OPTIMIZE` + `ZORDER` |
+| 05 | [05_build_gold_metrics](notebooks/05_build_gold_metrics) | Gold | Cria `daily_summary`, `city_ranking_temp` (com `ROW_NUMBER()`), `temperature_moving_avg` (médias móveis 24h/72h com `RANGE BETWEEN INTERVAL`) e a view `weather_alerts`. Aplica `OPTIMIZE` + `ZORDER` |
 | 06 | [06_delta_advanced_features](notebooks/06_delta_advanced_features) | — | Time Travel, Change Data Feed (CDF), `OPTIMIZE`/`ZORDER`, `VACUUM`, Spark UI, AQE e Liquid Clustering |
 | 06b | [06b_governance_uc](notebooks/06b_governance_uc) | — | `GRANT`/`REVOKE`, hierarquia de permissões do UC, Managed vs External Tables, Row-Level Security e Column Masking |
 | 07 | [07_streaming_silver_current](notebooks/07_streaming_silver_current) | Silver | Desafio: substitui o processamento batch do notebook 03 por Structured Streaming com `foreachBatch` + `trigger(availableNow=True)` |
@@ -64,6 +65,8 @@ A pasta `desafios/` contém 4 pipelines ETL completos (Bronze → Silver → Gol
 3. **Configure o Secret Scope** `openweather` com a key `api_key` (instruções no notebook 00)
 4. **Execute os notebooks em sequência** (01 → 02 → 03 → 04 → 05 → 06 → 06b → 07)
 5. **Desafios ETL:** execute os notebooks da pasta `desafios/` (D1 → D2 → D3 → D4) após o setup. Cada desafio é independente e cria seu próprio schema
+6. **Agendamento (opcional):** o job `workshop-weather-daily-pipeline` executa os notebooks 01 → 03 → 05 diariamente às 12:30 no fuso `America/Sao_Paulo`. Para executar manualmente, use **Run now** na página do Job
+7. **Genie Space:** o space "Workshop Weather Analytics" permite fazer perguntas em linguagem natural sobre as tabelas Gold (`temperature_moving_avg`, `daily_summary`, `city_ranking_temp`)
 
 > **Dica:** Cada notebook inclui um checklist no final. Confirme todos os itens antes de avançar para o próximo.
 
@@ -79,6 +82,10 @@ A pasta `desafios/` contém 4 pipelines ETL completos (Bronze → Silver → Gol
 * **Star Schema** — tabelas dimensão normalizadas (`dim_country`, `dim_country_language`, `dim_country_currency`)
 * **Databricks Secrets** — armazenamento seguro de credenciais com redação em logs
 * **Otimização** — Adaptive Query Execution (AQE), Liquid Clustering, Spark UI
+* **Change Data Feed (CDF)** — leitura incremental via `table_changes()` com tabela de watermark para controle de versão
+* **Window Functions Avançadas** — `RANGE BETWEEN INTERVAL 24/72 HOURS PRECEDING` para médias móveis de temperatura
+* **Lakeflow Jobs** — agendamento multi-tarefa (Bronze → Silver → Gold) com retry e dependências
+* **Genie Space** — queries em linguagem natural sobre as tabelas Gold do pipeline
 
 ## 📂 Estrutura do Repositório
 
